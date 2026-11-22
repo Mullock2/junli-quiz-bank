@@ -154,6 +154,11 @@
   .opt.wrong .k{background:var(--bad);color:#fff}
   .opt.right::after{content:"✓";margin-left:6px;color:var(--ok);font-weight:800;align-self:center}
   .opt.wrong::after{content:"✕";margin-left:6px;color:var(--bad);font-weight:800;align-self:center}
+  .opt .memoflag{
+    flex:0 0 auto;align-self:center;margin-left:4px;padding:1px 7px;border-radius:999px;
+    font-size:11px;font-weight:700;letter-spacing:.02em;white-space:nowrap;
+    color:var(--memo);background:var(--memobg);border:1px solid var(--memoline);
+  }
   .opt[disabled]{cursor:default;opacity:1}
 
   .fb{margin-top:14px;font-size:14.5px;min-height:22px;line-height:1.7}
@@ -511,6 +516,15 @@ function render() {
       const isPick = Array.isArray(picked) ? picked.indexOf(idx) >= 0 : picked === idx;
       if (isRight) b.classList.add("right");
       else if (isPick) b.classList.add("wrong");
+      if (isRight && kind) {
+        const mf = document.createElement("span");
+        mf.className = "memoflag";
+        mf.textContent = kind === "fill" ? "填空答案·整句背" : "整句背";
+        mf.title = kind === "fill"
+          ? "此选项就是原填空题的答案，需整句逐字记住"
+          : "此选项是一段完整表述，需整句记住";
+        b.appendChild(mf);
+      }
     }
     b.addEventListener("click", () => onPick(q, idx));
     box.appendChild(b);
