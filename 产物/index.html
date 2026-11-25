@@ -298,6 +298,7 @@
       <button id="prev">← 上一题</button>
       <button id="confirm" hidden>确认答案</button>
       <button id="peek">看答案</button>
+      <button id="redo" hidden>重做本题</button>
       <button id="next">下一题 →</button>
     </div>
   </div>
@@ -326,7 +327,8 @@
   <footer>
     点选项即时判定 · 多选题选好后点「确认答案」<br>
     <em>整句记忆</em> 标记的题目，正确选项要整句背下来（多为由填空题改造的题）<br>
-    键盘：1–5 ／ A–E 选选项，← → 切换题目
+    做过的题想再练一次，点「重做本题」重刷（错题本、收藏里同样有效）<br>
+    键盘：1–5 ／ A–E 选选项，← → 切换题目，R 重做本题
   </footer>
 </div>
 
@@ -384,6 +386,7 @@ state.search = "";
 const $ = s => document.querySelector(s);
 let selSet = null;          // 多选题临时选择
 let autoTimer = null;
+let redo = new Set();       // 本次会话里点了"重做本题"的题，答题记录暂时不再锁住选项
 let clockTimer = null;
 
 function save() {
@@ -494,7 +497,7 @@ function render() {
 
   const skim = state.mode === "skim";
   const rec = state.ans[q.id];
-  const answered = !!rec && !skim;
+  const answered = !!rec && !skim && !redo.has(q.id);
   const reveal = skim || answered;
   const picked = answered ? rec.p : null;
 
@@ -561,6 +564,8 @@ function render() {
   $("#confirm").hidden = !(q.type === "multi" && !reveal);
   $("#confirm").disabled = !(selSet && selSet.set.length);
   $("#peek").hidden = reveal || state.mode === "skim";
+  const redoBtn = $("#redo");
+  redoBtn.hidden = !(reveal && state.mode !== "skim" && state.mode !== "exam");
   $("#prev").disabled = i === 0;
   $("#next").disabled = i === arr.length - 1;
 
@@ -591,7 +596,7 @@ function ansLine(q, prefix) {
 function onPick(q, idx) {
   if (state.mode === "skim") return;
   if (state.mode === "exam") { examPick(idx); return; }
-  if (state.ans[q.id] && state.mode !== "skim") return;
+  if (state.ans[q.id] && !redo.has(q.id) && state.mode !== "skim") return;
   if (q.type === "multi") {
     const sel = selSet && selSet.for === q.id ? selSet : (selSet = { for: q.id, set: [] });
     const at = sel.set.indexOf(idx);
@@ -615,6 +620,7 @@ function judge(q, picked) {
   }
   const wasWrong = isWrong(q.id);
   state.ans[q.id] = { p: picked, r: right ? 1 : 0 };
+  redo.delete(q.id);
   save();
   if (right && wasWrong && state.mode === "wrong") toast("已掌握，移出错题本");
   selSet = null;
@@ -639,6 +645,18 @@ $("#peek").addEventListener("click", () => {
   state.ans[q.id] = { p: null, r: null };
   save(); render();
 });
+
+function redoCur() {
+  const arr = list();
+  const q = arr.find(x => x.id === state.cur);
+  if (!q || !state.ans[q.id]) return;
+  redo.add(q.id);
+  selSet = null;
+  render();
+  toast("已重置本题，可重新作答");
+}
+
+$("#redo").addEventListener("click", redoCur);
 
 $("#q-star").addEventListener("click", () => {
   if (!state.cur) return;
@@ -1078,6 +1096,7 @@ document.addEventListener("keydown", e => {
   const k = e.key;
   if (k === "ArrowLeft") { step(-1); return; }
   if (k === "ArrowRight") { step(1); return; }
+  if (k === "r" || k === "R") { redoCur(); return; }
   let idx = -1;
   if (/^[1-5]$/.test(k)) idx = parseInt(k, 10) - 1;
   else if (/^[a-eA-E]$/.test(k)) idx = "ABCDE".indexOf(k.toUpperCase());
