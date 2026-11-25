@@ -124,6 +124,10 @@
   .tag.memo::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--memoline)}
   .star{margin-left:auto;background:transparent;border:0;box-shadow:none;font-size:20px;line-height:1;padding:2px 6px;color:var(--faint)}
   .star.on{color:var(--star);text-shadow:0 0 12px rgba(240,169,44,.45)}
+.wb{margin-left:-2px;background:transparent;border:1px solid var(--line);box-shadow:none;
+  border-radius:999px;padding:3px 10px;font-size:11.5px;color:var(--dim);line-height:1.4}
+.wb:hover{border-color:var(--badline);color:var(--bad);background:var(--badbg)}
+.wb.on{color:var(--bad);border-color:var(--badline);background:var(--badbg);font-weight:600}
 
   .memotip{
     display:flex; gap:8px; align-items:flex-start; margin:0 0 14px;
@@ -288,6 +292,7 @@
       <span class="tag t" id="q-type"></span>
       <span class="tag memo" id="q-memo" hidden>整句记忆</span>
       <button class="star" id="q-star" title="收藏此题">☆</button>
+      <button class="wb" id="q-wb" title="点击加入错题本">＋ 错题本</button>
     </div>
     <div class="memotip" id="memo-tip" hidden></div>
     <div class="stem" id="stem"></div>
@@ -298,7 +303,6 @@
       <button id="prev">← 上一题</button>
       <button id="confirm" hidden>确认答案</button>
       <button id="peek">看答案</button>
-      <button id="redo" hidden>重做本题</button>
       <button id="next">下一题 →</button>
     </div>
   </div>
@@ -327,8 +331,8 @@
   <footer>
     点选项即时判定 · 多选题选好后点「确认答案」<br>
     <em>整句记忆</em> 标记的题目，正确选项要整句背下来（多为由填空题改造的题）<br>
-    做过的题想再练一次，点「重做本题」重刷（错题本、收藏里同样有效）<br>
-    键盘：1–5 ／ A–E 选选项，← → 切换题目，R 重做本题
+    错题本：答错自动收入，点题卡右上角的「＋ 错题本」可随时加入或移出；打开「错题本」就能从头再刷一遍<br>
+    键盘：1–5 ／ A–E 选选项，← → 切换题目
   </footer>
 </div>
 
@@ -372,7 +376,7 @@ const MEMO_TIP = {
   long: "本题正确选项是一段完整表述（多个要素/长句），答题时要能完整复述，不能只认关键词。"
 };
 
-const DEFAULT = { ans: {}, stars: {}, cur: null, chapter: "all", type: "all",
+const DEFAULT = { ans: {}, stars: {}, wrongBook: {}, cur: null, chapter: "all", type: "all",
   mode: "seq", seed: 20261122, theme: "auto", search: "", autoNext: true, exam: null };
 let state = JSON.parse(JSON.stringify(DEFAULT));
 try {
@@ -381,19 +385,24 @@ try {
 } catch (e) { /* 存档损坏则用默认值 */ }
 if (!state.ans) state.ans = {};
 if (!state.stars) state.stars = {};
+if (!state.wrongBook) {
+  /* 旧存档没有错题本，用「答错过」的题补一份 */
+  state.wrongBook = {};
+  Object.keys(state.ans).forEach(id => { if (state.ans[id].r === 0) state.wrongBook[id] = true; });
+}
 state.search = "";
 
 const $ = s => document.querySelector(s);
 let selSet = null;          // 多选题临时选择
 let autoTimer = null;
-let redo = new Set();       // 本次会话里点了"重做本题"的题，答题记录暂时不再锁住选项
+const sessionAns = new Set(); // 本次打开页面里已经作答过的题（错题本模式下用来区分「重刷」和「已答」）
 let clockTimer = null;
 
 function save() {
   try { LS && LS.setItem(KEY, JSON.stringify(state)); } catch (e) {}
 }
 
-function isWrong(id) { const a = state.ans[id]; return !!a && a.r === 0; }
+function wbHas(id) { return !!state.wrongBook[id]; }
 
 function memoKind(q) { return MEMO_KIND[q.id] || ""; }
 
@@ -405,7 +414,7 @@ function hash(str) {
 
 function list() {
   let arr = ALL;
-  if (state.mode === "wrong") arr = arr.filter(q => isWrong(q.id));
+  if (state.mode === "wrong") arr = arr.filter(q => wbHas(q.id));
   if (state.mode === "star") arr = arr.filter(q => state.stars[q.id]);
   if (state.mode === "memo") arr = arr.filter(q => memoKind(q));
   if (state.chapter !== "all") arr = arr.filter(q => q.chapter === state.chapter);
@@ -428,7 +437,7 @@ function stats() {
     if (r === 1 || r === 0) { judged++; if (r === 1) right++; }
   });
   return { done: ids.length, judged, right,
-    wrong: ids.filter(isWrong).length,
+    wrong: Object.keys(state.wrongBook).length,
     star: Object.keys(state.stars).filter(k => state.stars[k]).length };
 }
 
@@ -460,7 +469,7 @@ function render() {
   if (!arr.length) {
     $("#card").hidden = true;
     $("#empty").hidden = false;
-    $("#empty").textContent = state.mode === "wrong" ? "错题本是空的 —— 先去做几题吧（答错的题会自动进来）。"
+    $("#empty").textContent = state.mode === "wrong" ? "错题本还是空的 —— 做错的题会自动进来，也可以点题卡右上角的「＋ 错题本」手动加入。"
       : state.mode === "star" ? "还没有收藏的题目，点题目右上角的 ☆ 就能收藏。"
       : state.mode === "memo" ? "当前筛选下没有需要整句记忆的题目。"
       : state.search ? "没有匹配的题目，换个关键词试试。"
@@ -495,9 +504,17 @@ function render() {
   star.textContent = state.stars[q.id] ? "★" : "☆";
   star.classList.toggle("on", !!state.stars[q.id]);
 
+  const inWB = wbHas(q.id);
+  const wbBtn = $("#q-wb");
+  wbBtn.textContent = inWB ? "✓ 错题本" : "＋ 错题本";
+  wbBtn.classList.toggle("on", inWB);
+  wbBtn.title = inWB ? "点击移出错题本" : "点击加入错题本";
+
   const skim = state.mode === "skim";
   const rec = state.ans[q.id];
-  const answered = !!rec && !skim && !redo.has(q.id);
+  /* 错题本模式：只要本次打开页面后还没答过，就当成新题，可以重刷 */
+  const retryable = state.mode === "wrong" && !sessionAns.has(q.id);
+  const answered = !!rec && !skim && !retryable;
   const reveal = skim || answered;
   const picked = answered ? rec.p : null;
 
@@ -564,8 +581,6 @@ function render() {
   $("#confirm").hidden = !(q.type === "multi" && !reveal);
   $("#confirm").disabled = !(selSet && selSet.set.length);
   $("#peek").hidden = reveal || state.mode === "skim";
-  const redoBtn = $("#redo");
-  redoBtn.hidden = !(reveal && state.mode !== "skim" && state.mode !== "exam");
   $("#prev").disabled = i === 0;
   $("#next").disabled = i === arr.length - 1;
 
@@ -596,7 +611,7 @@ function ansLine(q, prefix) {
 function onPick(q, idx) {
   if (state.mode === "skim") return;
   if (state.mode === "exam") { examPick(idx); return; }
-  if (state.ans[q.id] && !redo.has(q.id) && state.mode !== "skim") return;
+  if (state.ans[q.id] && !(state.mode === "wrong" && !sessionAns.has(q.id))) return;
   if (q.type === "multi") {
     const sel = selSet && selSet.for === q.id ? selSet : (selSet = { for: q.id, set: [] });
     const at = sel.set.indexOf(idx);
@@ -618,11 +633,10 @@ function judge(q, picked) {
   } else {
     right = picked === q.answer;
   }
-  const wasWrong = isWrong(q.id);
   state.ans[q.id] = { p: picked, r: right ? 1 : 0 };
-  redo.delete(q.id);
+  sessionAns.add(q.id);
+  if (!right) state.wrongBook[q.id] = true;   // 答错自动收入；答对不自动移出，交给用户手动处理
   save();
-  if (right && wasWrong && state.mode === "wrong") toast("已掌握，移出错题本");
   selSet = null;
   render();
   if (right && state.autoNext) {
@@ -641,22 +655,20 @@ $("#confirm").addEventListener("click", () => {
 $("#peek").addEventListener("click", () => {
   const arr = list();
   const q = arr.find(x => x.id === state.cur);
-  if (!q || state.ans[q.id]) return;
+  if (!q) return;
+  if (state.ans[q.id] && !(state.mode === "wrong" && !sessionAns.has(q.id))) return;
   state.ans[q.id] = { p: null, r: null };
+  sessionAns.add(q.id);
   save(); render();
 });
 
-function redoCur() {
-  const arr = list();
-  const q = arr.find(x => x.id === state.cur);
-  if (!q || !state.ans[q.id]) return;
-  redo.add(q.id);
-  selSet = null;
-  render();
-  toast("已重置本题，可重新作答");
-}
-
-$("#redo").addEventListener("click", redoCur);
+$("#q-wb").addEventListener("click", () => {
+  if (!state.cur) return;
+  const on = !wbHas(state.cur);
+  if (on) state.wrongBook[state.cur] = true; else delete state.wrongBook[state.cur];
+  save(); refreshStats(); render();
+  toast(on ? "已加入错题本" : "已移出错题本");
+});
 
 $("#q-star").addEventListener("click", () => {
   if (!state.cur) return;
@@ -811,6 +823,7 @@ function submitExam(auto) {
       : picked === q.answer;
     if (ok) right++; else wrongs.push(q.id);
     state.ans[q.id] = { p: picked, r: ok ? 1 : 0 };
+    if (!ok) state.wrongBook[q.id] = true;
   });
   ex.submitted = true;
   ex.result = { right, total: qs.length, wrongs, used: Math.min(EXAM_MIN * 60000, Date.now() - ex.startAt) };
@@ -1014,8 +1027,12 @@ function openStats() {
 }
 
 function clearChapter(cid, cname) {
-  if (!confirm("清空「" + cname + "」的答题记录？收藏不受影响。")) return;
-  ALL.forEach(q => { if (q.chapter === cid) delete state.ans[q.id]; });
+  if (!confirm("清空「" + cname + "」的答题记录和错题本条目？收藏不受影响。")) return;
+  ALL.forEach(q => {
+    if (q.chapter !== cid) return;
+    delete state.ans[q.id];
+    delete state.wrongBook[q.id];
+  });
   save(); refreshStats(); openStats(); render();
   toast("已清空本记录");
 }
@@ -1076,13 +1093,15 @@ document.querySelectorAll("#chips button[data-mode]").forEach(b => {
   b.addEventListener("click", () => {
     state.mode = b.dataset.mode;
     state.cur = null;
+    /* 每次进入错题本都当成新的一轮：清掉本次会话的作答标记，题目重新可答 */
+    if (state.mode === "wrong") Object.keys(state.wrongBook).forEach(id => sessionAns.delete(id));
     clearInterval(clockTimer);
     save(); syncChips(); render();
   });
 });
 
 $("#reset").addEventListener("click", () => {
-  if (!confirm("清空本机所有答题记录、收藏和考试记录？此操作不可撤销。")) return;
+  if (!confirm("清空本机所有答题记录、错题本、收藏和考试记录？此操作不可撤销。")) return;
   state = JSON.parse(JSON.stringify(DEFAULT));
   save(); syncTools(); render(); toast("已重置");
 });
@@ -1096,7 +1115,6 @@ document.addEventListener("keydown", e => {
   const k = e.key;
   if (k === "ArrowLeft") { step(-1); return; }
   if (k === "ArrowRight") { step(1); return; }
-  if (k === "r" || k === "R") { redoCur(); return; }
   let idx = -1;
   if (/^[1-5]$/.test(k)) idx = parseInt(k, 10) - 1;
   else if (/^[a-eA-E]$/.test(k)) idx = "ABCDE".indexOf(k.toUpperCase());
